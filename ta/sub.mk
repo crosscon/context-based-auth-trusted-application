@@ -1,0 +1,9 @@
+global-incdirs-y += include
+srcs-y += csi_pta_wrapper.c
+srcs-y += cba.c
+srcs-y += certificate_handling.c
+srcs-y += signature_handling.c
+srcs-y += command_parser.c
+srcs-y += network_handling.c
+srcs-y += storage_handling.c
+srcs-y += utils.c
