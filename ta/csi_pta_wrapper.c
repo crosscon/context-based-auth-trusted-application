@@ -146,3 +146,20 @@ TEE_Result set_recording_parameters_and_start(uint8_t wifi_channel, uint8_t wifi
         pt, params
     );
 }
+
+
+TEE_Result zero_all(void) {
+    uint32_t pt = TEE_PARAM_TYPES(
+        TEE_PARAM_TYPE_NONE,
+        TEE_PARAM_TYPE_NONE,
+        TEE_PARAM_TYPE_NONE,
+        TEE_PARAM_TYPE_NONE
+    );
+
+    TEE_Param params[4] = { 0 };
+
+    return invoke_pta_command(
+        PTA_CSI_CMD_ZERO_ALL,
+        pt, params
+    );
+}

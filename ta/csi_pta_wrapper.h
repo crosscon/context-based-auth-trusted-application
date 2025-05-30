@@ -44,4 +44,9 @@ TEE_Result set_recording_parameters_and_start(
 );
 
 
+TEE_Result zero_all(
+    void
+);
+
+
 #endif /* TA_CONTEXT_BASED_AUTHENTICATION_CSI_PTA_WRAPPER_H */

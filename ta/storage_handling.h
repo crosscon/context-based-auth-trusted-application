@@ -35,6 +35,18 @@ TEE_Result read_object_if_exists(
 );
 
 
+TEE_Result object_exists(
+    const char* object_id,
+    size_t object_id_length
+);
+
+
+TEE_Result delete_object_if_exists(
+    const char* object_id,
+    size_t object_id_length
+);
+
+
 TEE_Result get_id(
     char buffer[4]
 );

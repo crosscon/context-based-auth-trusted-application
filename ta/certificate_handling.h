@@ -60,6 +60,16 @@ TEE_Result save_certificate_if_is_valid(
 );
 
 
+TEE_Result delete_saved_certificate(
+    void
+);
+
+
+TEE_Result has_client_certificate(
+    void
+);
+
+
 TEE_Result enroll_certificate(
     void
 );

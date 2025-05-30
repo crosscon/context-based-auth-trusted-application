@@ -61,19 +61,15 @@ int wrapped_recv(void* ctx, unsigned char* buf, size_t len) {
 }
 
 
-TEE_Result open_connection(mbedtls_ssl_context* ssl_ctx, bool use_client_certificate) {
+TEE_Result open_connection(
+    TEE_iSocketHandle *tcp_ctx, mbedtls_ssl_config* ssl_conf, mbedtls_x509_crt* ca_cert,
+    mbedtls_x509_crt* client_cert, mbedtls_pk_context* client_key,
+    mbedtls_ssl_context* ssl_ctx,
+    bool use_client_certificate
+) {
     TEE_Result res;
     int ret;
     uint32_t tcp_err;
-
-    struct socket_ctx* tcp_ctx;
-    tcp_ctx = TEE_Malloc(sizeof(struct socket_ctx), TEE_MALLOC_NO_FILL);
-    TEE_iSocketHandle tcp_ctx_c = (TEE_iSocketHandle) tcp_ctx;
-
-    mbedtls_ssl_config ssl_conf;
-    mbedtls_x509_crt ca_cert;
-    mbedtls_x509_crt client_cert;
-    mbedtls_pk_context client_key;
 
     struct TEE_tcpSocket_Setup_s tcp_conf;
     tcp_conf.ipVersion = TEE_IP_VERSION_4;
@@ -81,43 +77,43 @@ TEE_Result open_connection(mbedtls_ssl_context* ssl_ctx, bool use_client_certifi
     tcp_conf.server_port = CONTEXT_BASED_AUTHENTICATION_SERVER_PORT;
 
     mbedtls_ssl_init(ssl_ctx);
-    mbedtls_ssl_config_init(&ssl_conf);
-    mbedtls_x509_crt_init(&ca_cert);
+    mbedtls_ssl_config_init(ssl_conf);
+    mbedtls_x509_crt_init(ca_cert);
 
     if (use_client_certificate) {
-        res = load_private_key_from_storage(&client_key);
+        res = load_private_key_from_storage(client_key);
         if (res != TEE_SUCCESS) {
             res = TEE_ERROR_GENERIC;
         }
-        res = load_client_cert_from_storage(&client_cert);
+        res = load_client_cert_from_storage(client_cert);
         if (res != TEE_SUCCESS) {
             res = TEE_ERROR_GENERIC;
         }
     }
 
     mbedtls_ssl_config_defaults(
-        &ssl_conf,
+        ssl_conf,
         MBEDTLS_SSL_IS_CLIENT,
         MBEDTLS_SSL_TRANSPORT_STREAM,
         MBEDTLS_SSL_PRESET_DEFAULT
     );
-    mbedtls_ssl_conf_authmode(&ssl_conf, MBEDTLS_SSL_VERIFY_REQUIRED);
-    mbedtls_ssl_conf_ca_chain(&ssl_conf, &ca_cert, NULL);
-    mbedtls_ssl_conf_rng(&ssl_conf, get_random_data_for_mbedtls, NULL);
-    mbedtls_ssl_conf_min_version(&ssl_conf, MBEDTLS_SSL_MAJOR_VERSION_3, MBEDTLS_SSL_MINOR_VERSION_3);
-    mbedtls_ssl_conf_max_version(&ssl_conf, MBEDTLS_SSL_MAJOR_VERSION_3, MBEDTLS_SSL_MINOR_VERSION_3);
-    if (use_client_certificate && mbedtls_ssl_conf_own_cert(&ssl_conf, &client_cert, &client_key) != 0) {
+    mbedtls_ssl_conf_authmode(ssl_conf, MBEDTLS_SSL_VERIFY_REQUIRED);
+    mbedtls_ssl_conf_ca_chain(ssl_conf, ca_cert, NULL);
+    mbedtls_ssl_conf_rng(ssl_conf, get_random_data_for_mbedtls, NULL);
+    mbedtls_ssl_conf_min_version(ssl_conf, MBEDTLS_SSL_MAJOR_VERSION_3, MBEDTLS_SSL_MINOR_VERSION_3);
+    mbedtls_ssl_conf_max_version(ssl_conf, MBEDTLS_SSL_MAJOR_VERSION_3, MBEDTLS_SSL_MINOR_VERSION_3);
+    if (use_client_certificate && mbedtls_ssl_conf_own_cert(ssl_conf, client_cert, client_key) != 0) {
         return TEE_ERROR_ITEM_NOT_FOUND;
     }
 
-    mbedtls_ssl_setup(ssl_ctx, &ssl_conf);
-    mbedtls_ssl_set_bio(ssl_ctx, &tcp_ctx_c, wrapped_send, wrapped_recv, NULL);
+    mbedtls_ssl_setup(ssl_ctx, ssl_conf);
+    mbedtls_ssl_set_bio(ssl_ctx, tcp_ctx, wrapped_send, wrapped_recv, NULL);
 
-    ret = mbedtls_x509_crt_parse(&ca_cert, (const unsigned char*) CONTEXT_BASED_AUTHENTICATION_SERVER_SSL_CERT, strlen(CONTEXT_BASED_AUTHENTICATION_SERVER_SSL_CERT) + 1);
+    ret = mbedtls_x509_crt_parse(ca_cert, (const unsigned char*) CONTEXT_BASED_AUTHENTICATION_SERVER_SSL_CERT, strlen(CONTEXT_BASED_AUTHENTICATION_SERVER_SSL_CERT) + 1);
     if (ret < 0)
         return TEE_ERROR_BAD_FORMAT;
 
-    res = TEE_tcpSocket->open(&tcp_ctx_c, &tcp_conf, &tcp_err);
+    res = TEE_tcpSocket->open(tcp_ctx, &tcp_conf, &tcp_err);
     if (res != TEE_SUCCESS) {
         return res;
     }
@@ -165,22 +161,31 @@ TEE_Result wait_for_response(mbedtls_ssl_context* ssl_ctx, unsigned char* buffer
         current_write_position += ret;
         cumulatively_read += ret;
     }
+    buffer[buffer_length - 1] = '\0';
 
     return TEE_SUCCESS;
 }
 
-TEE_Result close_connection(mbedtls_ssl_context* ssl_ctx) {
+TEE_Result close_connection(TEE_iSocketHandle tcp_ctx, mbedtls_ssl_context* ssl_ctx) {
     mbedtls_ssl_close_notify(ssl_ctx);
-    TEE_tcpSocket->close(ssl_ctx->p_bio);
+    TEE_tcpSocket->close(tcp_ctx);
 
     return TEE_SUCCESS;
 }
 
-void clean_context(mbedtls_ssl_context* ssl_ctx) {
-    TEE_Free(ssl_ctx->p_bio);
-    mbedtls_x509_crt_free(ssl_ctx->conf->ca_chain);
-    mbedtls_ssl_config_free(ssl_ctx->conf);
-    mbedtls_ssl_free(ssl_ctx);
+void clean_context(
+    mbedtls_ssl_config* ssl_conf, mbedtls_x509_crt* ca_cert, mbedtls_x509_crt* client_cert, mbedtls_pk_context* client_key, mbedtls_ssl_context* ssl_ctx
+) {
+    if (ca_cert != NULL)
+        mbedtls_x509_crt_free(ca_cert);
+    if (client_cert != NULL)
+        mbedtls_x509_crt_free(client_cert);
+    if (client_key != NULL)
+        mbedtls_pk_free(client_key);
+    if (ssl_conf != NULL)
+        mbedtls_ssl_config_free(ssl_conf);
+    if (ssl_ctx != NULL)
+        mbedtls_ssl_free(ssl_ctx);
 }
 
 
@@ -290,26 +295,51 @@ clean_data:
 
 TEE_Result execute_command(const unsigned char* command, uint16_t command_length, unsigned char* response_buffer, uint16_t response_buffer_length, bool use_client_certificate) {
     TEE_Result res;
+
+    struct socket_ctx tcp_ctx;
+    TEE_iSocketHandle tcp_ctx_c;
+    tcp_ctx_c = (TEE_iSocketHandle) &tcp_ctx;
+
+    mbedtls_ssl_config ssl_conf;
+    mbedtls_x509_crt ca_cert;
+    mbedtls_x509_crt client_cert;
+    mbedtls_pk_context client_key;
     mbedtls_ssl_context ssl_ctx;
 
-    res = open_connection(&ssl_ctx, use_client_certificate);
+    res = open_connection(
+        &tcp_ctx_c, &ssl_conf, &ca_cert, &client_cert, &client_key, &ssl_ctx,
+        use_client_certificate
+    );
     if (res != TEE_SUCCESS)
         goto clean;
 
-    res = send_command_data(&ssl_ctx, command, command_length);
+    res = send_command_data(
+        &ssl_ctx,
+        command, command_length
+    );
     if (res != TEE_SUCCESS)
         goto clean;
 
-    res = wait_for_response(&ssl_ctx, response_buffer, response_buffer_length);
+    res = wait_for_response(
+        &ssl_ctx,
+        response_buffer, response_buffer_length
+    );
     if (res != TEE_SUCCESS)
         goto clean;
 
-    res = close_connection(&ssl_ctx);
-    if (res != TEE_SUCCESS)
-        goto clean;
+    res = close_connection(
+        tcp_ctx_c, &ssl_ctx
+    );
 
 clean:
-    clean_context(&ssl_ctx);
+    if (use_client_certificate)
+        clean_context(
+            &ssl_conf, &ca_cert, &client_cert, &client_key, &ssl_ctx
+        );
+    else
+        clean_context(
+            &ssl_conf, &ca_cert, NULL, NULL, &ssl_ctx
+        );
 
     return res;
 }

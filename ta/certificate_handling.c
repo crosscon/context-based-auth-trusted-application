@@ -160,6 +160,16 @@ TEE_Result save_certificate_if_is_valid(char* pem_certificate) {
 }
 
 
+TEE_Result delete_saved_certificate(void) {
+    return delete_object_if_exists(STORAGE_ID_CLIENT_CERT, strlen(STORAGE_ID_CLIENT_CERT));
+}
+
+
+TEE_Result has_client_certificate(void) {
+    return object_exists(STORAGE_ID_CLIENT_CERT, strlen(STORAGE_ID_CLIENT_CERT));
+}
+
+
 TEE_Result enroll_certificate(void) {
     TEE_Result res;
 
@@ -180,7 +190,7 @@ TEE_Result enroll_certificate(void) {
     str_cat(command, "\n\n", 2);
 
     TEE_MemFill(buffer, 0, sizeof(buffer));
-    res = execute_command(command, strlen(command), buffer, sizeof(buffer), false);
+    res = execute_command((const unsigned char*) command, strlen(command), (unsigned char*) buffer, sizeof(buffer), false);
     if (res != TEE_SUCCESS)
         return res;
     uint16_t response_length = strlen(buffer);

@@ -39,31 +39,54 @@ int wrapped_recv(
 
 
 TEE_Result open_connection(
+    TEE_iSocketHandle* tcp_ctx,
+    mbedtls_ssl_config* ssl_conf,
+    mbedtls_x509_crt* ca_cert,
+    mbedtls_x509_crt* client_cert,
+    mbedtls_pk_context* client_key,
     mbedtls_ssl_context* ssl_ctx,
+
     bool use_client_certificate
 );
 
 
 TEE_Result send_command_data(
+    /* TEE_iSocketHandle tcp_ctx,
+    mbedtls_ssl_config* ssl_conf,
+    mbedtls_x509_crt* ca_cert,
+    mbedtls_x509_crt* client_cert,
+    mbedtls_pk_context* client_key, */
     mbedtls_ssl_context* ssl_ctx,
+
     const unsigned char* data,
     size_t data_length
 );
 
 
 TEE_Result wait_for_response(
+    /*TEE_iSocketHandle tcp_ctx,
+    mbedtls_ssl_config* ssl_conf,
+    mbedtls_x509_crt* ca_cert,
+    mbedtls_x509_crt* client_cert,
+    mbedtls_pk_context* client_key, */
     mbedtls_ssl_context* ssl_ctx,
+
     unsigned char* buffer,
     size_t buffer_length
 );
 
 
 TEE_Result close_connection(
+    TEE_iSocketHandle tcp_ctx,
     mbedtls_ssl_context* ssl_ctx
 );
 
 
 void clean_context(
+    mbedtls_ssl_config* ssl_conf,
+    mbedtls_x509_crt* ca_cert,
+    mbedtls_x509_crt* client_cert,
+    mbedtls_pk_context* client_key,
     mbedtls_ssl_context* ssl_ctx
 );
 

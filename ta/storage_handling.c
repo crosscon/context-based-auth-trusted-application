@@ -68,6 +68,42 @@ TEE_Result read_object_if_exists(const char* object_id, size_t object_id_length,
 }
 
 
+TEE_Result object_exists(const char* object_id, size_t object_id_length) {
+    TEE_Result res;
+    TEE_ObjectHandle handle;
+
+    res = TEE_OpenPersistentObject(
+        TEE_STORAGE_PRIVATE,
+        object_id, object_id_length,
+        TEE_DATA_FLAG_ACCESS_WRITE_META,
+        &handle
+    );
+    if (res != TEE_SUCCESS)
+        return res;
+
+    TEE_CloseObject(handle);
+
+    return TEE_SUCCESS;
+}
+
+
+TEE_Result delete_object_if_exists(const char* object_id, size_t object_id_length) {
+    TEE_Result res;
+    TEE_ObjectHandle handle;
+
+    res = TEE_OpenPersistentObject(
+        TEE_STORAGE_PRIVATE,
+        object_id, object_id_length,
+        TEE_DATA_FLAG_ACCESS_WRITE_META,
+        &handle
+    );
+    if (res != TEE_SUCCESS)
+        return res;
+
+    return TEE_CloseAndDeletePersistentObject1(handle);
+}
+
+
 TEE_Result get_id(char buffer[4]) {
     const char* id = "device_id";
     size_t id_len = strlen(id);

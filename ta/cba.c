@@ -16,8 +16,8 @@
 
 #define TA_CONTEXT_BASED_AUTHENTICATION_MAC_FILTER_NAME         "mac_filter"
 #define TA_CONTEXT_BASED_AUTHENTICATION_BANDWIDTH               20
-#define TA_CONTEXT_BASED_AUTHENTICATION_WIFI_CHANNEL            36
-#define TA_CONTEXT_BASED_AUTHENTICATION_RECORDING_TIMEOUT       900
+#define TA_CONTEXT_BASED_AUTHENTICATION_WIFI_CHANNEL            11
+#define TA_CONTEXT_BASED_AUTHENTICATION_RECORDING_TIMEOUT       60
 #define TA_CONTEXT_BASED_AUTHENTICATION_SAMPLES_PER_DEVICE      128
 
 
@@ -27,13 +27,23 @@ TEE_Result enroll_csi_data() {
 
     uint8_t available = false;
     uint8_t return_reason;
-    uint32_t num_samples_collected;
+    uint32_t num_bytes_collected;
     char cmd_buffer[512];
     uint8_t csi_buffer[265];
+
+    struct socket_ctx ctx;
+    TEE_iSocketHandle tcp_ctx;
+    mbedtls_ssl_config ssl_conf;
+    mbedtls_x509_crt ca_cert;
+    mbedtls_x509_crt client_cert;
+    mbedtls_pk_context client_key;
     mbedtls_ssl_context ssl_ctx;
 
-    str_cat(cmd_buffer, "ENROLL_CSI\n", 11);
+    tcp_ctx = (TEE_iSocketHandle) &ctx;
 
+    res = zero_all();
+    if (res != TEE_SUCCESS)
+        return res;
     res = disable_mac_filter();
     if (res != TEE_SUCCESS)
         return res;
@@ -47,7 +57,7 @@ TEE_Result enroll_csi_data() {
         return res;
 
     while (!available) {
-        res = check_if_response_available(&available, &return_reason, &num_samples_collected);
+        res = check_if_response_available(&available, &return_reason, &num_bytes_collected);
         if (res != TEE_SUCCESS)
             return res;
 
@@ -55,9 +65,15 @@ TEE_Result enroll_csi_data() {
             TEE_Wait(500);
     }
 
-    res = open_connection(&ssl_ctx, true);
+    res = open_connection(
+        &tcp_ctx, &ssl_conf, &ca_cert, &client_cert, &client_key, &ssl_ctx,
+        true
+    );
     if (res != TEE_SUCCESS)
         goto clean;
+
+    TEE_MemFill(cmd_buffer, 0, sizeof(cmd_buffer));
+    str_cat(cmd_buffer, "ENROLL_CSI\n", 11);
 
     res = send_command_data(&ssl_ctx, (const unsigned char*) cmd_buffer, strlen(cmd_buffer));
     if (res != TEE_SUCCESS)
@@ -67,12 +83,15 @@ TEE_Result enroll_csi_data() {
     uint32_t actually_read;
     size_t actually_written;
     int ret;
-    for (uint32_t i = 0; i < num_samples_collected; i++) {
+    for (uint32_t i = 0; i < num_bytes_collected / sizeof(csi_buffer) + 1; i++) {
         res = read_data(csi_buffer, sizeof(csi_buffer), offset, &actually_read);
         if (res != TEE_SUCCESS)
             return res;
+        if (actually_read <= 0)
+            break;
         offset += actually_read;
 
+        TEE_MemFill(cmd_buffer, 0, sizeof(cmd_buffer));
         ret = mbedtls_base64_encode(
             (unsigned char*) cmd_buffer, sizeof(cmd_buffer),
             &actually_written,
@@ -87,7 +106,7 @@ TEE_Result enroll_csi_data() {
 
         res = send_command_data(
             &ssl_ctx,
-            (const unsigned char*) cmd_buffer, sizeof(cmd_buffer)
+            (const unsigned char*) cmd_buffer, actually_written + 1
         );
         if (res != TEE_SUCCESS)
             goto close;
@@ -95,12 +114,12 @@ TEE_Result enroll_csi_data() {
 
     cmd_buffer[0] = '\n';
     cmd_buffer[1] = '\0';
-    res = send_command_data(&ssl_ctx, (unsigned char*) cmd_buffer, 2);
+    res = send_command_data(&ssl_ctx, (unsigned char*) cmd_buffer, 1);
     if (res != TEE_SUCCESS)
         goto close;
 
     res = wait_for_response(&ssl_ctx, (unsigned char*) cmd_buffer, sizeof(cmd_buffer));
-    close_connection(&ssl_ctx);
+    close_connection(tcp_ctx, &ssl_ctx);
     if (res != TEE_SUCCESS)
         goto clean;
 
@@ -116,32 +135,39 @@ TEE_Result enroll_csi_data() {
         goto clean;
     }
 
-    if (param_buffer[0] != 'O') {
+    if (param_buffer[0] != 'S') {
         res = TEE_ERROR_EXTERNAL_CANCEL;
         goto clean;
     }
 
-    if (get_next_parameter(cmd_buffer, sizeof(cmd_buffer), (uint16_t*) &offset, param_buffer, sizeof(param_buffer), NULL) != 0) {
+    size_t output_buffer_offset;
+    output_buffer_offset = 0;
+    if (get_next_parameter(cmd_buffer, sizeof(cmd_buffer), (uint16_t*) &offset, param_buffer, sizeof(param_buffer), (uint16_t*) &output_buffer_offset) != 0) {
         res = TEE_ERROR_BAD_FORMAT;
         goto clean;
     }
 
-    ret = mbedtls_base64_decode((unsigned char*) cmd_buffer, sizeof(cmd_buffer), &actually_written, (const unsigned char*) param_buffer, sizeof(param_buffer));
-    if (ret != 0) {
-        res = TEE_ERROR_BAD_FORMAT;
-        goto clean;
+    if (param_buffer[0] != '?') {
+        ret = mbedtls_base64_decode((unsigned char*) cmd_buffer, sizeof(cmd_buffer), &actually_written, (const unsigned char*) param_buffer, output_buffer_offset);
+        if (ret != 0) {
+            res = TEE_ERROR_BAD_STATE;
+            goto clean;
+        }
+
+        res = write_object(TA_CONTEXT_BASED_AUTHENTICATION_MAC_FILTER_NAME, strlen(TA_CONTEXT_BASED_AUTHENTICATION_MAC_FILTER_NAME), cmd_buffer, actually_written);
+        if (res != TEE_SUCCESS) {
+            goto clean;
+        }
     }
 
-    res = write_object(TA_CONTEXT_BASED_AUTHENTICATION_MAC_FILTER_NAME, strlen(TA_CONTEXT_BASED_AUTHENTICATION_MAC_FILTER_NAME), cmd_buffer, actually_written);
-    if (res != TEE_SUCCESS) {
-        goto clean;
-    }
+    res = TEE_SUCCESS;
+    goto clean;
 
 close:
-    close_connection(&ssl_ctx);
+    close_connection(tcp_ctx, &ssl_ctx);
 
 clean:
-    clean_context(&ssl_ctx);
+    clean_context(&ssl_conf, &ca_cert, &client_cert, &client_key, &ssl_ctx);
 
     return res;
 }
@@ -149,38 +175,59 @@ clean:
 
 TEE_Result create_prove(char* nonce, size_t nonce_size, char* signature_buffer, size_t signature_buffer_size) {
     TEE_Result res;
+    int ret;
 
     uint8_t available = false;
     uint8_t return_reason;
-    uint32_t num_samples_collected;
+    uint32_t num_bytes_collected;
     char cmd_buffer[512];
     uint8_t csi_buffer[265];
+    uint8_t nonce_b64[64];
+    uint8_t mac_buffer[300];
+    size_t actually_written;
+    size_t actually_read;
+
+    struct socket_ctx ctx;
+    TEE_iSocketHandle tcp_ctx;
+    mbedtls_ssl_config ssl_conf;
+    mbedtls_x509_crt ca_cert;
+    mbedtls_x509_crt client_cert;
+    mbedtls_pk_context client_key;
     mbedtls_ssl_context ssl_ctx;
 
-    uint32_t offset;
-    uint32_t actually_read;
-    size_t actually_written;
-    int ret;
+    tcp_ctx = (TEE_iSocketHandle) &ctx;
 
-    ret = mbedtls_base64_encode((unsigned char*) csi_buffer, sizeof(csi_buffer), &actually_written, (const unsigned char*) nonce, sizeof(nonce));
+    /* set command header */
+    TEE_MemFill(cmd_buffer, 0, sizeof(cmd_buffer));
+    str_cat(cmd_buffer, "PROVE\n", 6);
+    ret = mbedtls_base64_encode((unsigned char*) nonce_b64, sizeof(nonce_b64), &actually_written, (const unsigned char*) nonce, nonce_size);
     if (ret != 0)
         return TEE_ERROR_BAD_STATE;
-
-    str_cat(cmd_buffer, "PROVE\n", 11);
-    str_cat(cmd_buffer, (const char*) csi_buffer, actually_written);
+    str_cat(cmd_buffer, (const char*) nonce_b64, actually_written);
     str_cat(cmd_buffer, "\n", 1);
 
-    res = read_object_if_exists_with_length(
-        TA_CONTEXT_BASED_AUTHENTICATION_MAC_FILTER_NAME,
-        strlen(TA_CONTEXT_BASED_AUTHENTICATION_MAC_FILTER_NAME),
-        (char*) csi_buffer, sizeof(csi_buffer),
-        (size_t*) &actually_read
-    );
+    /* set execution parameters */
+    res = zero_all();
     if (res != TEE_SUCCESS)
         return res;
-    res = set_mac_filter(csi_buffer, actually_read / 6);
-    if (res != TEE_SUCCESS)
-        return res;
+
+    if (object_exists(TA_CONTEXT_BASED_AUTHENTICATION_MAC_FILTER_NAME, strlen(TA_CONTEXT_BASED_AUTHENTICATION_MAC_FILTER_NAME)) == TEE_SUCCESS) {
+        res = read_object_if_exists_with_length(
+            TA_CONTEXT_BASED_AUTHENTICATION_MAC_FILTER_NAME, strlen(TA_CONTEXT_BASED_AUTHENTICATION_MAC_FILTER_NAME),
+            (char*) mac_buffer, sizeof(mac_buffer),
+            &actually_read
+        );
+        if (res != TEE_SUCCESS)
+            return res;
+        res = set_mac_filter(mac_buffer, actually_read / 6);
+        if (res != TEE_SUCCESS)
+            return res;
+    } else {
+        res = disable_mac_filter();
+        if (res != TEE_SUCCESS)
+            return res;
+    }
+
     res = set_recording_parameters_and_start(
         TA_CONTEXT_BASED_AUTHENTICATION_WIFI_CHANNEL,
         TA_CONTEXT_BASED_AUTHENTICATION_BANDWIDTH,
@@ -190,8 +237,9 @@ TEE_Result create_prove(char* nonce, size_t nonce_size, char* signature_buffer, 
     if (res != TEE_SUCCESS)
         return res;
 
+    /* wait for data */
     while (!available) {
-        res = check_if_response_available(&available, &return_reason, &num_samples_collected);
+        res = check_if_response_available(&available, &return_reason, &num_bytes_collected);
         if (res != TEE_SUCCESS)
             return res;
 
@@ -199,20 +247,29 @@ TEE_Result create_prove(char* nonce, size_t nonce_size, char* signature_buffer, 
             TEE_Wait(500);
     }
 
-    res = open_connection(&ssl_ctx, true);
+    res = open_connection(
+        &tcp_ctx, &ssl_conf, &ca_cert, &client_cert, &client_key, &ssl_ctx,
+        true
+    );
     if (res != TEE_SUCCESS)
         goto clean;
+
 
     res = send_command_data(&ssl_ctx, (const unsigned char*) cmd_buffer, strlen(cmd_buffer));
     if (res != TEE_SUCCESS)
         goto close;
 
-    for (uint32_t i = 0; i < num_samples_collected; i++) {
-        res = read_data(csi_buffer, sizeof(csi_buffer), offset, &actually_read);
+    /* read & send data */
+    uint32_t offset;
+    for (uint32_t i = 0; i < num_bytes_collected / sizeof(csi_buffer) + 1; i++) {
+        res = read_data(csi_buffer, sizeof(csi_buffer), offset, (uint32_t*) &actually_read);
         if (res != TEE_SUCCESS)
             return res;
+        if (actually_read <= 0)
+            break;
         offset += actually_read;
 
+        TEE_MemFill(cmd_buffer, 0, sizeof(cmd_buffer));
         ret = mbedtls_base64_encode(
             (unsigned char*) cmd_buffer, sizeof(cmd_buffer),
             &actually_written,
@@ -227,7 +284,7 @@ TEE_Result create_prove(char* nonce, size_t nonce_size, char* signature_buffer, 
 
         res = send_command_data(
             &ssl_ctx,
-            (const unsigned char*) cmd_buffer, sizeof(cmd_buffer)
+            (const unsigned char*) cmd_buffer, actually_written + 1
         );
         if (res != TEE_SUCCESS)
             goto close;
@@ -235,12 +292,13 @@ TEE_Result create_prove(char* nonce, size_t nonce_size, char* signature_buffer, 
 
     cmd_buffer[0] = '\n';
     cmd_buffer[1] = '\0';
-    res = send_command_data(&ssl_ctx, (unsigned char*) cmd_buffer, 2);
+    res = send_command_data(&ssl_ctx, (unsigned char*) cmd_buffer, 1);
     if (res != TEE_SUCCESS)
         goto close;
 
+    /* work on reply */
     res = wait_for_response(&ssl_ctx, (unsigned char*) cmd_buffer, sizeof(cmd_buffer));
-    close_connection(&ssl_ctx);
+    close_connection(tcp_ctx, &ssl_ctx);
     if (res != TEE_SUCCESS)
         goto clean;
 
@@ -256,7 +314,7 @@ TEE_Result create_prove(char* nonce, size_t nonce_size, char* signature_buffer, 
         goto clean;
     }
 
-    if (param_buffer[0] != 'O') {
+    if (param_buffer[0] != 'S') {
         res = TEE_ERROR_EXTERNAL_CANCEL;
         goto clean;
     }
@@ -266,19 +324,24 @@ TEE_Result create_prove(char* nonce, size_t nonce_size, char* signature_buffer, 
         goto clean;
     }
 
-    TEE_MemMove(signature_buffer, param_buffer, strlen(param_buffer) + 1);
+    ret = mbedtls_base64_decode((unsigned char*) signature_buffer, signature_buffer_size, &actually_written, (const unsigned char*) param_buffer, sizeof(param_buffer));
+    if (ret != 0) {
+        res = TEE_ERROR_BAD_FORMAT;
+        goto clean;
+    }
+
 close:
-    close_connection(&ssl_ctx);
+    close_connection(tcp_ctx, &ssl_ctx);
 
 clean:
-    clean_context(&ssl_ctx);
+    clean_context(&ssl_conf, &ca_cert, &client_cert, &client_key, &ssl_ctx);
 
     return res;
 }
 
 
 TEE_Result get_nonce(char* buffer, size_t buffer_size) {
-    if (buffer_size < 16)
+    if (buffer_size != 16)
         return TEE_ERROR_BAD_PARAMETERS;
 
     TEE_GenerateRandom(buffer, buffer_size);
@@ -294,6 +357,9 @@ TEE_Result get_nonce(char* buffer, size_t buffer_size) {
 
 
 TEE_Result command_get_nonce(uint32_t param_types, TEE_Param params[4]) {
+    TEE_Result res;
+    char nonce_buffer[16];
+
     uint32_t exp_param_types = TEE_PARAM_TYPES(
         TEE_PARAM_TYPE_MEMREF_OUTPUT,
         TEE_PARAM_TYPE_NONE,
@@ -301,10 +367,14 @@ TEE_Result command_get_nonce(uint32_t param_types, TEE_Param params[4]) {
         TEE_PARAM_TYPE_NONE
     );
 
-    if (param_types != exp_param_types)
+    if (param_types != exp_param_types || params[0].memref.size != 16)
         return TEE_ERROR_BAD_PARAMETERS;
 
-    return get_nonce(params[0].memref.buffer, params[0].memref.size);
+    res = get_nonce(nonce_buffer, sizeof(nonce_buffer));
+
+    TEE_MemMove(params[0].memref.buffer, nonce_buffer, sizeof(nonce_buffer));
+
+    return res;
 }
 
 
@@ -326,6 +396,8 @@ TEE_Result command_enroll(uint32_t param_types, TEE_Param params[4]) {
         return res;
 
     res = enroll_csi_data();
+    if (res != TEE_SUCCESS)
+        delete_saved_certificate();
 
     return res;
 }
@@ -341,13 +413,23 @@ TEE_Result command_prove(uint32_t param_types, TEE_Param params[4]) {
         TEE_PARAM_TYPE_NONE
     );
 
-    if (param_types != exp_param_types)
+    if (param_types != exp_param_types || params[0].memref.size != 16 | params[1].memref.size != 512)
         return TEE_ERROR_BAD_PARAMETERS;
 
-    return create_prove(
-        params[0].memref.buffer, params[0].memref.size,
-        params[1].memref.buffer, params[1].memref.size
+    char nonce[16];
+    char signature[512];
+
+    TEE_MemMove(nonce, params[0].memref.buffer, 16);
+    TEE_MemFill(signature, 0, sizeof(signature));
+
+    res = create_prove(
+        nonce, sizeof(nonce),
+        signature, sizeof(signature)
     );
+
+    TEE_MemMove(params[1].memref.buffer, signature, sizeof(signature));
+
+    return res;
 }
 
 
@@ -359,12 +441,18 @@ TEE_Result command_verify(uint32_t param_types, TEE_Param params[4]) {
         TEE_PARAM_TYPE_NONE
     );
 
-    if (param_types != exp_param_types)
+    if (param_types != exp_param_types || params[0].memref.size < 16 || params[1].memref.size >= 512)
         return TEE_ERROR_BAD_PARAMETERS;
 
+    char nonce[16];
+    TEE_MemMove(nonce, params[0].memref.buffer, 16);
+
+    char signature[512];
+    TEE_MemMove(signature, params[1].memref.buffer, params[1].memref.size);
+
     return verify_signature(
-        (const char*) params[0].memref.buffer, params[0].memref.size,
-        (const char*) params[1].memref.buffer, params[1].memref.size
+        (const char*) nonce, sizeof(nonce),
+        (const char*) signature, params[1].memref.size
     );
 }
 
