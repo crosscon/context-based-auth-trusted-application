@@ -21,7 +21,7 @@ TEE_Result check_if_response_available(
 
 TEE_Result read_data(
     uint8_t* buffer,
-    uint32_t buffer_size,
+    uint32_t bytes_to_read,
     uint32_t read_offset,
     uint32_t* actually_read
 );

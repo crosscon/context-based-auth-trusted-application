@@ -54,7 +54,7 @@ TEE_Result check_if_response_available(uint8_t* available, uint8_t* return_reaso
 }
 
 
-TEE_Result read_data(uint8_t* buffer, uint32_t buffer_size, uint32_t read_offset, uint32_t* actually_read) {
+TEE_Result read_data(uint8_t* buffer, uint32_t bytes_to_read, uint32_t read_offset, uint32_t* actually_read) {
     TEE_Result res;
     uint32_t pt = TEE_PARAM_TYPES(
         TEE_PARAM_TYPE_MEMREF_OUTPUT,
@@ -65,10 +65,10 @@ TEE_Result read_data(uint8_t* buffer, uint32_t buffer_size, uint32_t read_offset
 
     TEE_Param params[4] = { 0 };
 
-    uint8_t* local_buffer = TEE_Malloc(buffer_size, TEE_MALLOC_FILL_ZERO);
+    uint8_t* local_buffer = TEE_Malloc(bytes_to_read, TEE_MALLOC_FILL_ZERO);
 
     params[0].memref.buffer = local_buffer;
-    params[0].memref.size = buffer_size;
+    params[0].memref.size = bytes_to_read;
     params[1].value.a = read_offset;
 
     res = invoke_pta_command(
