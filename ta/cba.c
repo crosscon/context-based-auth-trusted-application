@@ -14,22 +14,42 @@
 #include "utils.h"
 
 
-#define TA_CONTEXT_BASED_AUTHENTICATION_BANDWIDTH               20
-#define TA_CONTEXT_BASED_AUTHENTICATION_WIFI_CHANNEL            11
+#define TA_CONTEXT_BASED_AUTHENTICATION_BANDWIDTH               20      // either 20, 40, or 80 MHz
+#define TA_CONTEXT_BASED_AUTHENTICATION_WIFI_CHANNEL            11      // must be a valid WiFi channel
 #define TA_CONTEXT_BASED_AUTHENTICATION_RECORDING_TIMEOUT       60
 #define TA_CONTEXT_BASED_AUTHENTICATION_SAMPLES_PER_DEVICE      128
 
 
 #define TA_CONTEXT_BASED_AUTHENTICATION_MAC_FILTER_NAME         "mac_filter"
+#define TA_CONTEXT_BASED_AUTHENTICATION_CSI_HEADER_SIZE         18
+
+uint16_t csi_data_size_per_sample() {
+    uint8_t factor;
+    switch (TA_CONTEXT_BASED_AUTHENTICATION_BANDWIDTH) {
+        case 20:
+            factor = 1;
+            break;
+        case 40:
+            factor = 2;
+            break;
+        case 80:
+            factor = 4;
+            break;
+        default:
+            factor = 0;
+    }
+
+    return TA_CONTEXT_BASED_AUTHENTICATION_CSI_HEADER_SIZE + 256 * factor;
+}
 
 TEE_Result enroll_csi_data() {
     TEE_Result res;
 
     uint8_t available = false;
     uint8_t return_reason;
-    uint32_t num_bytes_collected;
-    char cmd_buffer[512];
-    uint8_t csi_buffer[265];
+    uint32_t num_samples_collected;
+    char cmd_buffer[2048];
+    uint8_t csi_buffer[1042];
 
     struct socket_ctx ctx;
     TEE_iSocketHandle tcp_ctx;
@@ -57,13 +77,16 @@ TEE_Result enroll_csi_data() {
         return res;
 
     while (!available) {
-        res = check_if_response_available(&available, &return_reason, &num_bytes_collected);
+        res = check_if_response_available(&available, &return_reason, &num_samples_collected);
         if (res != TEE_SUCCESS)
             return res;
 
         if (!available)
             TEE_Wait(500);
     }
+
+    if (return_reason < 6 || return_reason > 9)
+        return TEE_ERROR_CANCEL;
 
     res = open_connection(
         &tcp_ctx, &ssl_conf, &ca_cert, &client_cert, &client_key, &ssl_ctx,
@@ -79,12 +102,15 @@ TEE_Result enroll_csi_data() {
     if (res != TEE_SUCCESS)
         goto close;
 
+    uint16_t single_sample_size;
     uint32_t offset;
     uint32_t actually_read;
     size_t actually_written;
     int ret;
-    for (uint32_t i = 0; i < num_bytes_collected / sizeof(csi_buffer) + 1; i++) {
-        res = read_data(csi_buffer, sizeof(csi_buffer), offset, &actually_read);
+
+    single_sample_size = csi_data_size_per_sample();
+    for (uint32_t i = 0; i < num_samples_collected; i++) {
+        res = read_data(csi_buffer, single_sample_size, offset, &actually_read);
         if (res != TEE_SUCCESS)
             return res;
         if (actually_read <= 0)
@@ -179,13 +205,14 @@ TEE_Result create_prove(char* nonce, size_t nonce_size, char* signature_buffer, 
 
     uint8_t available = false;
     uint8_t return_reason;
-    uint32_t num_bytes_collected;
-    char cmd_buffer[512];
-    uint8_t csi_buffer[265];
+    uint32_t num_samples_collected;
+    char cmd_buffer[2048];
+    uint8_t csi_buffer[1042];
     uint8_t nonce_b64[64];
     uint8_t mac_buffer[300];
     size_t actually_written;
     size_t actually_read;
+    uint16_t single_sample_size;
 
     struct socket_ctx ctx;
     TEE_iSocketHandle tcp_ctx;
@@ -239,13 +266,16 @@ TEE_Result create_prove(char* nonce, size_t nonce_size, char* signature_buffer, 
 
     /* wait for data */
     while (!available) {
-        res = check_if_response_available(&available, &return_reason, &num_bytes_collected);
+        res = check_if_response_available(&available, &return_reason, &num_samples_collected);
         if (res != TEE_SUCCESS)
             return res;
 
         if (!available)
             TEE_Wait(500);
     }
+
+    if (return_reason < 6 || return_reason > 9)
+        return TEE_ERROR_CANCEL;
 
     res = open_connection(
         &tcp_ctx, &ssl_conf, &ca_cert, &client_cert, &client_key, &ssl_ctx,
@@ -261,8 +291,9 @@ TEE_Result create_prove(char* nonce, size_t nonce_size, char* signature_buffer, 
 
     /* read & send data */
     uint32_t offset;
-    for (uint32_t i = 0; i < num_bytes_collected / sizeof(csi_buffer) + 1; i++) {
-        res = read_data(csi_buffer, sizeof(csi_buffer), offset, (uint32_t*) &actually_read);
+    single_sample_size = csi_data_size_per_sample();
+    for (uint32_t i = 0; i < num_samples_collected; i++) {
+        res = read_data(csi_buffer, single_sample_size, offset, (uint32_t*) &actually_read);
         if (res != TEE_SUCCESS)
             return res;
         if (actually_read <= 0)
@@ -319,17 +350,22 @@ TEE_Result create_prove(char* nonce, size_t nonce_size, char* signature_buffer, 
         goto clean;
     }
 
-    if (get_next_parameter(cmd_buffer, sizeof(cmd_buffer), (uint16_t*) &offset, param_buffer, sizeof(param_buffer), NULL) != 0) {
+    uint16_t output_buffer_offset;
+    output_buffer_offset = 0;
+    if (get_next_parameter(cmd_buffer, sizeof(cmd_buffer), (uint16_t*) &offset, param_buffer, sizeof(param_buffer), &output_buffer_offset) != 0) {
         res = TEE_ERROR_BAD_FORMAT;
         goto clean;
     }
 
-    ret = mbedtls_base64_decode((unsigned char*) signature_buffer, signature_buffer_size, &actually_written, (const unsigned char*) param_buffer, sizeof(param_buffer));
+    DMSG("signature size: %u", output_buffer_offset);
+
+    ret = mbedtls_base64_decode((unsigned char*) signature_buffer, signature_buffer_size, &actually_written, (const unsigned char*) param_buffer, sizeof(output_buffer_offset));
     if (ret != 0) {
         res = TEE_ERROR_BAD_FORMAT;
         goto clean;
     }
 
+    goto clean;
 close:
     close_connection(tcp_ctx, &ssl_ctx);
 
