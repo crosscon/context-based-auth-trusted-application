@@ -177,9 +177,9 @@ void test_verify() {
         TEEC_NONE
     );
 
-    char nonce_buffer[32];
-    memset(nonce_buffer, 3, sizeof(nonce_buffer));
-    char signature_buffer[32];
+    char nonce_buffer[16];
+    memset(nonce_buffer, 0, sizeof(nonce_buffer));
+    char signature_buffer[71] = { 48, 69, 2, 33, 0, 238, 79, 112, 36, 34, 39, 135, 111, 5, 163, 245, 18, 25, 141, 101, 208, 126, 207, 17, 186, 27, 110, 168, 119, 161, 30, 50, 57, 93, 94, 164, 210, 2, 32, 21, 27, 55, 25, 232, 5, 147, 139, 92, 113, 13, 15, 178, 212, 240, 147, 20, 202, 89, 124, 194, 185, 234, 228, 2, 3, 98, 70, 57, 122, 147, 21 };
 
     op.params[0].tmpref.buffer = nonce_buffer;
     op.params[0].tmpref.size = sizeof(nonce_buffer);
