@@ -30,9 +30,14 @@ The following options require configuration in the listed files (the options are
 
 This TA requires running on the CROSSCON HV next to a Linux VM which contains a WiFi driver in order to collect the CSI samples. Furthermore, for communicating with this VM, a modified version of OPTEE-OS is required which includes a specific Pseudo TA (see [here](https://github.com/crosscon/context-based-auth-optee-os)). The remote side which validates the measurement is implemented [here](https://github.com/crosscon/context-based-auth-remote).
 
-Building this TA works similar to building other TAs for OPTEE-OS on CROSSCON and depends on the exact build system used. [These instructions (step 6)](https://github.com/crosscon/CROSSCON-Hypervisor-and-TEE-Isolation-Demos/) can generally be used as guidance.
+Building this TA works similar to building other TAs for OPTEE-OS on CROSSCON and depends on the exact build system used. [These instructions (step 6)](https://github.com/crosscon/CROSSCON-Hypervisor-and-TEE-Isolation-Demos/) can be used as guidance.
 
 After compilation, the signed TA application `.ta` file must be stored on the Linux file system which invokes the TA execution at `/usr/lib/optee_armtz`. This again depends on the build system used. In the CROSSCON demo repository (which uses buildroot), the developers move the TA and the host application using overlays (see there for further details).
+
+
+## Testing
+
+Testing this TA can be done with the
 
 
 ## Usage
@@ -44,7 +49,7 @@ The following commands are available:
 ### GET_NONCE
 - description: returns a random 16 byte nonce (using the TEE random function)
 - params:
-    - MEMREF_OUTPUT (where retrieved ID will be returned; must be 16 bytes in length)
+    - MEMREF_OUTPUT (where retrieved nonce will be returned; must be 16 bytes in length)
     - NONE/NONE/NONE
 - return value: TEE_SUCCESS on nonce retrieval (nonce found in first parameter)
 
