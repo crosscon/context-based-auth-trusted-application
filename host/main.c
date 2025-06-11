@@ -204,7 +204,11 @@ void test_verify() {
 
 int main(int argc, char** argv) {
     if (argc <= 1) {
-        printf("Error: No arg given. Either 'start' or 'read' required.");
+        printf("Possible parameters are:");
+        printf(" - nonce: generate a nonce within the TEE (output truncated)");
+        printf(" - enroll: enroll first the certificate, then the initial CSI data at the remote");
+        printf(" - prove: create a prove based on the current wireless environment using a hard-coded nonce");
+        printf(" - verify: verify a (hardcoded) signature against the remote's public key and the actual nonce used");
         return 1;
     }
 
@@ -219,7 +223,7 @@ int main(int argc, char** argv) {
     } else if (strcmp(arg, "verify") == 0) {
         test_verify();
     } else {
-        printf("Invalid parameter(s).\n");
+        printf("Invalid parameter(s). Run without any parameters to see possible values.\n");
     }
 
     return 0;
