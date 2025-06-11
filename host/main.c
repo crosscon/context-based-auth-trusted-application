@@ -185,8 +185,8 @@ void test_verify() {
 
     op.params[0].tmpref.buffer = nonce_buffer;
     op.params[0].tmpref.size = sizeof(nonce_buffer);
-    op.params[1].tmpref.buffer = SERVER_SIGNATURE;
-    op.params[1].tmpref.size = sizeof(SERVER_SIGNATURE);
+    op.params[1].tmpref.buffer = SERVER_TEST_SIGNATURE;
+    op.params[1].tmpref.size = sizeof(SERVER_TEST_SIGNATURE);
 
     res = TEEC_InvokeCommand(&sess, TA_CONTEXT_BASED_AUTHENTICATION_CMD_VERIFY, &op, &err_origin);
     if (res != TEEC_SUCCESS) {
