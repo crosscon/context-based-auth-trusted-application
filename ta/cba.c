@@ -21,7 +21,7 @@
 
 
 #define TA_CONTEXT_BASED_AUTHENTICATION_MAC_FILTER_NAME         "mac_filter"
-#define TA_CONTEXT_BASED_AUTHENTICATION_CSI_HEADER_SIZE         18
+#define TA_CONTEXT_BASED_AUTHENTICATION_CSI_HEADER_SIZE         1 + 6 + 2 + 2
 
 uint16_t csi_data_size_per_sample() {
     uint8_t factor;
@@ -108,6 +108,7 @@ TEE_Result enroll_csi_data() {
     size_t actually_written;
     int ret;
 
+    offset = 0;
     single_sample_size = csi_data_size_per_sample();
     for (uint32_t i = 0; i < num_samples_collected; i++) {
         res = read_data(csi_buffer, single_sample_size, offset, &actually_read);
@@ -213,6 +214,7 @@ TEE_Result create_prove(char* nonce, size_t nonce_size, char* signature_buffer, 
     size_t actually_written;
     size_t actually_read;
     uint16_t single_sample_size;
+    uint32_t offset;
 
     struct socket_ctx ctx;
     TEE_iSocketHandle tcp_ctx;
@@ -290,7 +292,7 @@ TEE_Result create_prove(char* nonce, size_t nonce_size, char* signature_buffer, 
         goto close;
 
     /* read & send data */
-    uint32_t offset;
+    offset = 0;
     single_sample_size = csi_data_size_per_sample();
     for (uint32_t i = 0; i < num_samples_collected; i++) {
         res = read_data(csi_buffer, single_sample_size, offset, (uint32_t*) &actually_read);
