@@ -24,6 +24,7 @@ The following options require configuration in the listed files (the options are
 | | WiFi channel bandwidth (20/40/80 MHz; depends on access point) |
 | | CSI recording timeout |
 | | CSI samples per device (depends on ML model) |
+| `host/main.c` | server test signature (only required if using the demo app); see [here](https://github.com/crosscon/context-based-auth-remote/tree/with-ml-next) for more details |
 
 
 ## Build & Installation
