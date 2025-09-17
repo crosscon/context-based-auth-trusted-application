@@ -200,7 +200,7 @@ clean:
 }
 
 
-TEE_Result create_prove(char* nonce, size_t nonce_size, char* signature_buffer, size_t signature_buffer_size) {
+TEE_Result create_prove(char* nonce, size_t nonce_size, char* signature_buffer, size_t signature_buffer_size, size_t* signature_size) {
     TEE_Result res;
     int ret;
 
@@ -330,6 +330,7 @@ TEE_Result create_prove(char* nonce, size_t nonce_size, char* signature_buffer, 
         goto close;
 
     /* work on reply */
+    TEE_MemFill(cmd_buffer, 0, sizeof(cmd_buffer));
     res = wait_for_response(&ssl_ctx, (unsigned char*) cmd_buffer, sizeof(cmd_buffer));
     close_connection(tcp_ctx, &ssl_ctx);
     if (res != TEE_SUCCESS)
@@ -361,11 +362,12 @@ TEE_Result create_prove(char* nonce, size_t nonce_size, char* signature_buffer, 
 
     DMSG("signature size: %u", output_buffer_offset);
 
-    ret = mbedtls_base64_decode((unsigned char*) signature_buffer, signature_buffer_size, &actually_written, (const unsigned char*) param_buffer, sizeof(output_buffer_offset));
+    ret = mbedtls_base64_decode((unsigned char*) signature_buffer, signature_buffer_size, &actually_written, (const unsigned char*) param_buffer, output_buffer_offset);
     if (ret != 0) {
         res = TEE_ERROR_BAD_FORMAT;
-        goto clean;
     }
+
+    *signature_size = actually_written;
 
     goto clean;
 close:
@@ -447,7 +449,7 @@ TEE_Result command_prove(uint32_t param_types, TEE_Param params[4]) {
     uint32_t exp_param_types = TEE_PARAM_TYPES(
         TEE_PARAM_TYPE_MEMREF_INPUT,
         TEE_PARAM_TYPE_MEMREF_OUTPUT,
-        TEE_PARAM_TYPE_NONE,
+        TEE_PARAM_TYPE_VALUE_OUTPUT,
         TEE_PARAM_TYPE_NONE
     );
 
@@ -456,16 +458,19 @@ TEE_Result command_prove(uint32_t param_types, TEE_Param params[4]) {
 
     char nonce[16];
     char signature[512];
+    size_t signature_size;
 
     TEE_MemMove(nonce, params[0].memref.buffer, 16);
     TEE_MemFill(signature, 0, sizeof(signature));
 
     res = create_prove(
         nonce, sizeof(nonce),
-        signature, sizeof(signature)
+        signature, sizeof(signature),
+        &signature_size
     );
 
     TEE_MemMove(params[1].memref.buffer, signature, sizeof(signature));
+    params[2].value.a = signature_size;
 
     return res;
 }
@@ -479,7 +484,7 @@ TEE_Result command_verify(uint32_t param_types, TEE_Param params[4]) {
         TEE_PARAM_TYPE_NONE
     );
 
-    if (param_types != exp_param_types || params[0].memref.size < 16 || params[1].memref.size >= 512)
+    if (param_types != exp_param_types || params[0].memref.size < 16 || params[1].memref.size > 512)
         return TEE_ERROR_BAD_PARAMETERS;
 
     char nonce[16];
