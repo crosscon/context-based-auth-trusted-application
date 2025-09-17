@@ -63,15 +63,16 @@ The following commands are available:
 - description: Takes a measurement and tries to send it to the server for attestation; if remote is unreachable, puts it in the queue
 - params:
     - MEMREF_INPUT (16 byte nonce)
-    - MEMREF_OUTPUT (signature returned by the server)
-    - NONE/NONE
+    - MEMREF_OUTPUT (signature returned by the server; buffer size of exactly 512 bytes)
+    - VALUE_OUTPUT (actual signature length; differs from signature to signature)
+    - NONE
 - return value: TEE_SUCCESS on successful proof creation, TEE_ERROR_EXTERNAL_CANCEL on server abort (i.e. comparison failed)
 
 ### VERIFY
 - description: verifies a given signature for a given nonce using the server signature certificate
 - params:
     - MEMREF_INPUT (16 byte nonce)
-    - MEMREF_INPUT (signature from the server)
+    - MEMREF_INPUT (signature from the server; actual length as returned by *PROVE* command)
     - NONE/NONE
 - return value: TEE_SUCCESS on successful verification, TEE_ERROR_EXTERNAL_CANCEL on failed verification
 
